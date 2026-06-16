@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>西進武嶺單車配速與上管貼計算器</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        /* 針對手機表格滾動優化 */
+        .table-container {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        /* 全網頁武嶺牌樓熱血背景圖 */
+        body {
+            background-image: linear-gradient(to bottom, rgba(15, 23, 42, 0.45), rgba(15, 23, 42, 0.65)), 
+                              url('https://images.unsplash.com/photo-1681285408253-ab0fc28d6896?auto=format&fit=crop&w=1920&q=80');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            background-repeat: no-repeat;
+        }
+    </style>
+</head>
+<body class="text-gray-900 min-h-screen flex flex-col justify-between font-sans">
+
+    <div class="container mx-auto px-4 py-6 max-w-6xl text-center flex-grow">
+        <header class="mb-6 bg-slate-900/60 backdrop-blur-md rounded-xl p-4 inline-block border border-white/10 shadow-lg">
+            <h1 class="text-3xl font-extrabold text-white mb-1 tracking-wide drop-shadow-md">🏔️ 西進武嶺單車配速與上管貼計算器</h1>
+            <p class="text-sm text-red-200 font-medium">依據 Strava 大數據、物理功率模型與高海拔衰退率即時精算</p>
+        </header>
+
+        <div class="bg-white/90 backdrop-blur-md rounded-xl shadow-xl p-6 mb-6 text-left border border-white/20">
+            <h2 class="text-xl font-bold mb-4 border-b pb-2 text-red-700 flex items-center gap-2">
+                <span>1. 輸入基本參數</span>
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">騎士體重 (kg)</label>
+                    <input type="number" id="riderWeight" value="65" oninput="calculatePacing()" class="w-full border border-gray-300 rounded p-2 focus:ring-2 focus:ring-red-500 focus:border-red-500 font-semibold">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">車重 + 裝備重 (kg)</label>
+                    <input type="number" id="bikeWeight" value="8.5" oninput="calculatePacing()" class="w-full border border-gray-300 rounded p-2 focus:ring-2 focus:ring-red-500 focus:border-red-500 font-semibold">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">您的 FTP (W)</label>
+                    <input type="number" id="ftp" value="220" oninput="updateDefaultWatts()" class="w-full border border-gray-300 rounded p-2 focus:ring-2 focus:ring-red-500 focus:border-red-500 font-semibold">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="exportToExcel()" class="w-full bg-emerald-600 text-white font-bold py-2.5 px-3 rounded shadow-md hover:bg-emerald-700 transition duration-200 cursor-pointer text-center text-sm flex items-center justify-center gap-1.5 transform active:scale-95">
+                        📊 匯出上管貼 Excel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white/90 backdrop-blur-md rounded-xl shadow-xl p-5 mb-6 text-left border border-white/20">
+            <h2 class="text-xl font-bold mb-4 border-b pb-2 text-red-700">2. 分段配速調整面板</h2>
+            <div class="table-container rounded-lg shadow-sm overflow-hidden border border-gray-200 bg-white">
+                <table class="w-full text-left border-collapse min-w-[850px]">
+                    <thead>
+                        <tr class="bg-red-700 text-white uppercase text-xs font-bold leading-normal">
+                            <th class="py-3 px-3 text-left">路段名稱</th>
+                            <th class="py-3 px-2 text-center">距離 (km)</th>
+                            <th class="py-3 px-2 text-center">分段爬升</th>
+                            <th class="py-3 px-2 text-center">累積爬升</th>
+                            <th class="py-3 px-3 text-center bg-red-800 text-amber-300 font-extrabold">目標瓦數 (W)</th>
+                            <th class="py-3 px-2 text-center">當前 % FTP</th>
+                            <th class="py-3 px-2 text-center">即時推力比</th>
+                            <th class="py-3 px-2 text-center">預估分段時間</th>
+                            <th class="py-3 px-3 text-center bg-red-900 text-white">累積完成時間 & 補給提醒</th>
+                        </tr>
+                    </thead>
+                    <tbody id="segmentsBody" class="text-gray-800 text-sm font-medium">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-1 gap-6 text-left">
+            <div class="bg-gradient-to-br from-red-700/90 to-red-900/90 backdrop-blur-md p-6 rounded-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 text-white border border-red-500/30">
+                <div>
+                    <h3 class="text-xl font-bold text-amber-300 mb-1 tracking-wide">🏁 預估總完賽數據</h3>
+                    <p class="text-xs text-red-100">總距離: <span class="font-bold text-white">53.28 km</span> | 總爬升: <span class="font-bold text-white">2805 m</span></p>
+                </div>
+                <div class="text-right">
+                    <p class="text-3xl font-extrabold text-amber-300 font-mono drop-shadow-md" id="totalTime">00 小時 00 分 00 秒</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-slate-900/80 backdrop-blur-xs text-slate-400 text-center py-4 text-sm tracking-wide mt-12 border-t border-white/5">
+        Design by Jack Yang
+    </footer>
+
+    <script>
+        // 西進武嶺大數據與 Strava 段落結構化資料
+        const segmentsData = [
+            { id: 1, name: "1. 埔里 - 人止關", distance: 16.08, climb: 340, defaultPct: 75 },
+            { id: 2, name: "2. 人止關 - 霧社", distance: 5.33, climb: 355, defaultPct: 82 },
+            { id: 3, name: "3. 霧社 - 最高小七", distance: 11.98, climb: 615, defaultPct: 78 },
+            { id: 4, name: "4. 最高小七 - 翠峰", distance: 6.04, climb: 450, defaultPct: 78 },
+            { id: 5, name: "5. 翠峰 - 鳶峰", distance: 6.58, climb: 430, defaultPct: 75 },
+            { id: 6, name: "6. 鳶峰 - 昆陽", distance: 5.15, climb: 410, defaultPct: 72 },
+            { id: 7, name: "7. 昆陽 - 武嶺", distance: 2.12, climb: 205, defaultPct: 70 }
+        ];
+
+        let calculatedResults = [];
+
+        // 初始化表格
+        function initTable() {
+            const tbody = document.getElementById("segmentsBody");
+            tbody.innerHTML = "";
+            let accumClimb = 0;
+            const ftp = parseFloat(document.getElementById("ftp").value) || 220;
+
+            segmentsData.forEach((seg, index) => {
+                accumClimb += seg.climb;
+                const defaultWatts = Math.round((ftp * seg.defaultPct) / 100);
+
+                const row = document.createElement("tr");
+                row.className = "border-b border-gray-200 bg-white hover:bg-slate-50 text-center transition-colors";
+                row.innerHTML = `
+                    <td class="py-3 px-3 font-bold text-gray-900 text-left">${seg.name}</td>
+                    <td class="py-3 px-2">${seg.distance.toFixed(2)}</td>
+                    <td class="py-3 px-2 text-red-700 font-bold">${seg.climb} m</td>
+                    <td class="py-3 px-2 text-gray-500">${accumClimb} m</td>
+                    <td class="py-3 px-3 bg-red-50/30">
+                        <div class="flex items-center justify-center gap-1">
+                            <input type="number" id="watts-${index}" value="${defaultWatts}" min="10" max="1000" oninput="calculatePacing()" class="w-20 border border-gray-300 rounded text-center p-1 font-bold text-red-700 bg-white focus:outline-none focus:border-red-500 focus:ring focus:ring-red-100">
+                            <span class="text-xs text-gray-500 font-bold">W</span>
+                        </div>
+                    </td>
+                    <td class="py-3 px-2 text-gray-600 font-semibold" id="pct-${index}">-</td>
+                    <td class="py-3 px-2 bg-emerald-50/60 text-emerald-800 font-extrabold" id="wkg-${index}">-</td>
+                    <td class="py-3 px-2 font-mono text-gray-700" id="duration-${index}">-</td>
+                    <td class="py-3 px-3 font-mono text-left bg-red-50/20" id="accumTimeContainer-${index}">
+                        <div class="font-extrabold text-red-900 text-center md:text-left" id="accumTime-${index}">-</div>
+                        <div class="text-xs mt-1 space-y-0.5 flex flex-wrap gap-1 justify-center md:justify-start" id="gelRemind-${index}"></div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            calculatePacing();
+        }
+
+        // 修改主參數 FTP 時，同步更新輸入框瓦數
+        function updateDefaultWatts() {
+            const ftp = parseFloat(document.getElementById("ftp").value) || 220;
+            segmentsData.forEach((seg, index) => {
+                const inputWatts = document.getElementById(`watts-${index}`);
+                if (inputWatts) {
+                    inputWatts.value = Math.round((ftp * seg.defaultPct) / 100);
+                }
+            });
+            calculatePacing();
+        }
+
+        // 核心計算與畫面更新
+        function calculatePacing() {
+            const wRider = parseFloat(document.getElementById("riderWeight").value) || 65;
+            const wBike = parseFloat(document.getElementById("bikeWeight").value) || 8.5;
+            const ftp = parseFloat(document.getElementById("ftp").value) || 220;
+            const totalWeight = wRider + wBike;
+
+            let totalSeconds = 0;
+            let accumClimb = 0;
+            calculatedResults = []; 
+
+            for(let i=0; i<segmentsData.length; i++) {
+                const el = document.getElementById(`gelRemind-${i}`);
+                if(el) el.innerHTML = "";
+            }
+
+            segmentsData.forEach((seg, index) => {
+                accumClimb += seg.climb;
+                
+                const targetWatts = parseFloat(document.getElementById(`watts-${index}`).value) || Math.round((ftp * seg.defaultPct) / 100);
+                const pct = ftp > 0 ? ((targetWatts / ftp) * 100).toFixed(0) : 0;
+                const wkg = targetWatts / wRider;
+
+                document.getElementById(`pct-${index}`).innerText = `${pct} %`;
+                document.getElementById(`wkg-${index}`).innerText = `${wkg.toFixed(2)} W/kg`;
+
+                // 物理模型速度模擬
+                const distanceMeters = seg.distance * 1000;
+                const grade = seg.climb / distanceMeters;
+                const g = 9.81;
+                const crr = 0.005;
+                const cda = 0.35;
+                const rho = 1.1; 
+
+                let v = 1.0; 
+                for (let i = 0; i < 10; i++) {
+                    const f_gravity = totalWeight * g * grade;
+                    const f_rolling = totalWeight * g * crr;
+                    const f_drag = 0.5 * rho * cda * v * v;
+                    const total_force = f_gravity + f_rolling + f_drag;
+                    
+                    if (total_force > 0) {
+                        v = targetWatts / total_force;
+                    }
+                }
+
+                // 高海拔衰退大數據修正
+                let altitudeFactor = 1.0;
+                if (index >= 4) altitudeFactor = 0.95; 
+                if (index >= 5) altitudeFactor = 0.92; 
+                if (index == 6) altitudeFactor = 0.88; 
+                
+                v = v * altitudeFactor;
+                if (v < 1.3) v = 1.3; 
+
+                const segmentSeconds = distanceMeters / v;
+                const startSeconds = totalSeconds;
+                totalSeconds += segmentSeconds;
+
+                document.getElementById(`duration-${index}`).innerText = formatTime(segmentSeconds);
+                document.getElementById(`accumTime-${index}`).innerText = formatTime(totalSeconds);
+
+                calculatedResults.push({
+                    name: seg.name,
+                    distance: seg.distance,
+                    climb: seg.climb,
+                    accumClimb: accumClimb,
+                    pct: pct,
+                    watts: Math.round(targetWatts),
+                    wkg: wkg.toFixed(2),
+                    durationStr: formatTime(segmentSeconds),
+                    accumTimeStr: formatTime(totalSeconds),
+                    startSeconds: startSeconds,
+                    endSeconds: totalSeconds,
+                    gels: []
+                });
+            });
+
+            // 計算果膠點位（每 45 分鐘 = 2700 秒）
+            const maxGelCount = Math.floor(totalSeconds / 2700);
+            for (let i = 1; i <= maxGelCount; i++) {
+                const gelTimeSeconds = i * 2700;
+                
+                for (let j = 0; j < calculatedResults.length; j++) {
+                    if (gelTimeSeconds >= calculatedResults[j].startSeconds && gelTimeSeconds <= calculatedResults[j].endSeconds) {
+                        calculatedResults[j].gels.push(`第${i}條(${formatTime(gelTimeSeconds)})`);
+                        
+                        const remindDiv = document.getElementById(`gelRemind-${j}`);
+                        if (remindDiv) {
+                            const p = document.createElement("div");
+                            p.className = "bg-orange-600 text-white px-1.5 py-0.5 rounded font-sans font-bold text-[11px] border border-orange-700 shadow-sm block";
+                            p.innerText = `🧪 第 ${i} 條 (${formatTime(gelTimeSeconds)})`;
+                            remindDiv.appendChild(p);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            document.getElementById("totalTime").innerText = formatTime(totalSeconds, true);
+        }
+
+        function formatTime(seconds, isChinese = false) {
+            const hrs = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+
+            if (isChinese) {
+                return `${hrs.toString().padStart(2, '0')} 小時 ${mins.toString().padStart(2, '0')} 分 ${secs.toString().padStart(2, '0')} 秒`;
+            }
+            return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Excel 導出
+        function exportToExcel() {
+            const wRider = document.getElementById("riderWeight").value;
+            const wBike = document.getElementById("bikeWeight").value;
+            const ftp = document.getElementById("ftp").value;
+
+            const wb = XLSX.utils.book_new();
+            const ws_data = [
+                ["🚴 西進武嶺配速上管貼 (Jack Yang 設計)", "", "", "", "", "", ""],
+                [`設定參數: 騎士 ${wRider}kg | 車裝 ${wBike}kg | FTP ${ftp}W`, "", "", "", "", "", ""],
+                [],
+                ["路段名稱", "距離", "分段/累積爬升", "目標瓦數", "當前%FTP", "推力比", "累積完成時間 & 補給提醒"],
+            ];
+
+            calculatedResults.forEach(res => {
+                const gelText = res.gels.length > 0 ? " [" + res.gels.join(", ") + "]" : "";
+                const accumTimeAndGel = res.accumTimeStr + gelText;
+
+                ws_data.push([
+                    res.name.substring(3), 
+                    `${res.distance} km`,
+                    `${res.climb}m / ${res.accumClimb}m`,
+                    `${res.watts}W`,
+                    `${res.pct}%`,
+                    `${res.wkg} W/kg`,
+                    accumTimeAndGel
+                ]);
+            });
+
+            ws_data.push([
+                "總計 (完賽!)",
+                "53.28 km",
+                "2805 m",
+                "-",
+                "-",
+                "-",
+                document.getElementById("totalTime").innerText
+            ]);
+
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+
+            ws['!cols'] = [
+                { wch: 18 }, 
+                { wch: 10 }, 
+                { wch: 16 }, 
+                { wch: 10 }, 
+                { wch: 10 }, 
+                { wch: 10 }, 
+                { wch: 32 }  
+            ];
+
+            XLSX.utils.book_append_sheet(wb, ws, "武嶺上管配速貼");
+            XLSX.writeFile(wb, `武嶺西進配速上管貼_FTP${ftp}W.xlsx`);
+        }
+
+        window.onload = initTable;
+    </script>
+</body>
+</html>
